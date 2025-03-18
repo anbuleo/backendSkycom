@@ -7,7 +7,7 @@ import { errorHandler } from "../uitils/errorHandler.js"
 const createPlan = async(req,res,next)=>{
         try {
             let {id}= req.user
-            let {name,amount} = req.body
+            let {name,amount,speed} = req.body
             let isAdmin = await User.findById(id)
             if(isAdmin.role !='admin') return next(errorHandler(401,'Admin only create a plan'))
             
@@ -15,7 +15,7 @@ const createPlan = async(req,res,next)=>{
                 if(isPlan.length >0 ) return next(errorHandler(401,'Plan Already exist'))
 
                 
-                let newPlan = new Plan({name,amount})
+                let newPlan = new Plan({name,amount,speed})
 
                 await newPlan.save()
 
@@ -63,7 +63,7 @@ const editPlan = async(req,res,next)=>{
 const getAllPlan = async(req,res,next)=>{
     try {
         let plan = await Plan.find()
-        if(!plan.length)return next(errorHandler(400,'No plan found'))
+        if(!plan.length)return next(errorHandler(200,'No plan found'))
 
             res.status(200).json({
                 plan,

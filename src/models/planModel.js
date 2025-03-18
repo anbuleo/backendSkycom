@@ -9,6 +9,10 @@ const planSchema = new mongoose.Schema({
     amount :{
         type:Number,
         required:true
+    },
+    speed :{
+        type:Number,
+        required:true
     }
 })
 

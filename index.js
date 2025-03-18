@@ -27,7 +27,7 @@ app.use(cors(cordOptions))
 let PORT = process.env.PORT;
 
 // "0 0 1 * *"
-cron.schedule("* * * * *", async () => { // Runs at midnight on the 1st of every month
+cron.schedule( "0 0 1 * *", async () => { // Runs at midnight on the 1st of every month
     console.log("Generating monthly collections...");
     await generateMonthlyCollections();
 });
