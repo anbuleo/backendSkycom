@@ -2,6 +2,8 @@ import Customer from "../models/customerModel.js"
 import Plan from "../models/planModel.js"
 import { errorHandler } from "../uitils/errorHandler.js"
 
+import XLSX from "xlsx"
+
 
 
 const createCustomer = async(req,res,next)=>{
@@ -23,6 +25,64 @@ const createCustomer = async(req,res,next)=>{
         next(error)
     }
 }
+const bulkCreateCustomers = async (req, res, next) => {
+    try {
+      if (!req.file) return next(errorHandler(400, "Please upload an Excel file"));
+  
+      // Read Excel file
+      const workbook = XLSX.readFile(req.file.path);
+      const sheetName = workbook.SheetNames[0];
+      const customersData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+      const plans = await Plan.find();
+      const planMap = {}; // Create a lookup object
+  
+      // Fill lookup object with plan names mapped to their IDs
+      plans.forEach(plan => {
+        planMap[plan.name.toLowerCase()] = plan._id; // Store in lowercase for case-insensitive matching
+      });
+  
+      // Extract and format customer data
+      const customers = customersData.map(row => {
+        const planName = row["Package Name"] ? row["Package Name"].toLowerCase().trim() : "";
+        return {
+          name: row["Username"],
+          mobile: String(row["Mobile"]).trim(), // Ensure mobile is a string
+          address: row["Installation Address"],
+          planId: planMap[planName] || null, // Replace plan name with ID, or set to null if not found
+          advanceAmount: row["Advance Amount"] || 0,
+          remainingBalance: row["Remaining Balance"] || 0,
+          createdBy: req.user.id,
+        };
+      });
+      const validCustomers = customers.filter(c => c.planId !== null);
+      const invalidCustomers = customers.filter(c => c.planId === null);
+      // Find existing customers by mobile number
+      // Find existing customers by mobile number
+      const existingMobiles = await Customer.find({ mobile: { $in: validCustomers.map(c => c.mobile) } });
+      const existingNumbers = new Set(existingMobiles.map(c => c.mobile));
+  
+      // Separate new and duplicate customers
+      const newCustomers = validCustomers.filter(c => !existingNumbers.has(c.mobile));
+      const duplicateCustomers = validCustomers.filter(c => existingNumbers.has(c.mobile));
+  
+      // Insert only new customers
+      let insertedCustomers = [];
+      if (newCustomers.length > 0) {
+        insertedCustomers = await Customer.insertMany(newCustomers);
+      }
+  
+      res.status(201).json({
+        message: `${insertedCustomers.length} customers added successfully`,
+        inserted: insertedCustomers.length,
+        duplicates: duplicateCustomers.length,
+        invalidPlans: invalidCustomers.length,
+        invalidCustomers, // List of customers with invalid plan names
+        duplicateCustomers, // List of duplicate entries
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
 
 const getAllCustomer = async(req,res,next)=>{
     try {
@@ -75,5 +135,6 @@ export default {
     createCustomer,
     changePlan,
     deleteCustomer,
-    getAllCustomer
+    getAllCustomer,
+    bulkCreateCustomers
 }
