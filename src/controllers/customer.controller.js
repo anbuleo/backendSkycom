@@ -1,3 +1,4 @@
+import Collection from "../models/collectionModel.js"
 import Customer from "../models/customerModel.js"
 import Plan from "../models/planModel.js"
 import { errorHandler } from "../uitils/errorHandler.js"
@@ -10,8 +11,8 @@ const createCustomer = async(req,res,next)=>{
     try {
         let {name,mobile,address,planId,advanceAmount,remainingBalance} = req.body
         let {id} = req.user
-        let isMobile = await Customer.find({mobile})
-        if(isMobile.length >0 ) return next(errorHandler(401,'mobile Number already registered'))
+        let isMobile = await Customer.find({name})
+        if(isMobile.length >0 ) return next(errorHandler(401,'Name already registered'))
 
         let newCustomer = new Customer({name,mobile,address,advanceAmount,planId,createdBy:id,remainingBalance})
        await newCustomer.save()
@@ -58,12 +59,12 @@ const bulkCreateCustomers = async (req, res, next) => {
       const invalidCustomers = customers.filter(c => c.planId === null);
       // Find existing customers by mobile number
       // Find existing customers by mobile number
-      const existingMobiles = await Customer.find({ mobile: { $in: validCustomers.map(c => c.mobile) } });
-      const existingNumbers = new Set(existingMobiles.map(c => c.mobile));
+      const existingMobiles = await Customer.find({ name: { $in: validCustomers.map(c => c.name) } });
+      const existingNumbers = new Set(existingMobiles.map(c => c.name));
   
       // Separate new and duplicate customers
-      const newCustomers = validCustomers.filter(c => !existingNumbers.has(c.mobile));
-      const duplicateCustomers = validCustomers.filter(c => existingNumbers.has(c.mobile));
+      const newCustomers = validCustomers.filter(c => !existingNumbers.has(c.name));
+      const duplicateCustomers = validCustomers.filter(c => existingNumbers.has(c.name));
   
       // Insert only new customers
       let insertedCustomers = [];
@@ -80,18 +81,25 @@ const bulkCreateCustomers = async (req, res, next) => {
         duplicateCustomers, // List of duplicate entries
       });
     } catch (error) {
+        // console.log(error)
       next(error);
     }
   };
 
 const getAllCustomer = async(req,res,next)=>{
     try {
-        let customer = await Customer.find()
+        let customer = await Customer.find().populate({
+            path: "transactions.collectedBy",
+            model: "user",
+            select: "userName _id"
+        }).lean();
+        // console.log(customer)
         res.status(200).json({
             message:"All customer",
             customer
 
         })
+
     } catch (error) {
         next(error)
     }
@@ -100,16 +108,48 @@ const getAllCustomer = async(req,res,next)=>{
 const changePlan = async(req,res,next)=>{
     try {
         let id = req.params.id
-        let {planId} = req.body
+        let {planId,advanceAmount,remainingBalance} = req.body
         let isPlan = await Plan.findById(planId)
+        let cust = await Customer.findById(id)
+        if (!cust) return next(errorHandler(404, "Customer Not Found"));
+        let transactions = [];
+
+        if (cust.advanceAmount !== advanceAmount) {
+            transactions.push({
+                type: "advance",
+                amount: advanceAmount ,
+                collectedBy:req.user.id
+            });
+        }
+
+        // Compare and log remaining balance changes
+        if (cust.remainingBalance !== remainingBalance) {
+            transactions.push({
+                type: "remainbalance",
+                amount: remainingBalance , // Difference in remaining balance
+                collectedBy:req.user.id
+            });
+        }
+
+     
+          
+      
+
         if(!isPlan ) return next(errorHandler(401,"plan Does not exist"))
+            
 
-        let isCustomer = await Customer.findByIdAndUpdate(id,{planId},{new:true})
+            let updatedCustomer = await Customer.findByIdAndUpdate(
+                id,
+                { planId, advanceAmount, remainingBalance, $push: { transactions: { $each: transactions } } },
+                { new: true }
+            );
+    
+            if (!updatedCustomer) return next(errorHandler(401, "Customer Not Found"));
 
-        if(!isCustomer) return next(errorHandler(401,'customer Not found'))
+      
         
             res.status(200).json({
-                message:"plan changed Success"
+                message:"customer Edited Success"
             })
         
     } catch (error) {
@@ -122,6 +162,7 @@ const deleteCustomer = async(req,res,next)=>{
         let id = req.params.id
          let customerExist = await Customer.findById(id)
                 if( !customerExist) return next(errorHandler(401,'customer not found'))
+                    await Collection.deleteMany({customerId:id})
          await Customer.findByIdAndDelete({_id:id})
         res.status(200).json({
             message:"customer deleted Success"

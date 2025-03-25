@@ -61,9 +61,11 @@ export const generateMonthlyCollections = async () => {
                     dueDate: new Date(year, month - 1, 10),
                     month,
                     year,
-                    status:statusPay
+                    status:statusPay,
+                   
                 });
                 customer.remainingBalance = remainingAmount; 
+                customer. transactions=[{type:'due',amount:amount}]
 
                 await newCollection.save();
                 await customer.save();
@@ -115,6 +117,7 @@ const makePayment = async (req, res,next) => {
             if (req.user) {
                 collection.userId = req.user.id;
             }
+            customer. transactions=[{type:'due',amount:amount,collectedBy:req.user.id}]
         await collection.save();
         await customer.save();
 
