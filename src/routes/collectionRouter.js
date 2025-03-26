@@ -12,7 +12,7 @@ router.get('/gettotalbyplan',verifyToken,collectionController.getTotalCollection
 router.get('/getallcollection',verifyToken,collectionController.getAllCollections)
 router.get('/getmonthlycollectionbyuser',verifyToken,collectionController.getMonthlyCollectionByUser)
 router.get('/download-excel',verifyToken,collectionController.downloadxl)
-router.post('/genratebill',generateMonthlyCollections)
+router.post('/genratebill',collectionController.generateMonthlyCollectionss)
 
 
 export default router

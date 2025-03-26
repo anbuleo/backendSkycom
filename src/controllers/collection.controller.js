@@ -6,6 +6,81 @@ import XLSX from "xlsx";
 import fs from "fs";
 
 
+const generateMonthlyCollectionss =async () => {
+    try {
+        const customers = await Customer.find();
+        let statusPay = "Pending"
+
+        if (!customers.length) {
+            console.log("No customers found.");
+            return;
+        }
+
+        const today = new Date();
+        const month = today.getMonth() + 1;
+        const year = today.getFullYear();
+
+        for (const customer of customers) {
+            const existingCollection = await Collection.findOne({ customerId: customer._id, month, year });
+
+            if (!existingCollection) {
+                let payable =await Plan.findById({_id:customer.planId})
+                let monthlyCharge = Number(payable.amount); // Default monthly charge
+                let totalDue = monthlyCharge;
+                let remainingAmount = 0;
+
+                // Deduct advanceAmount first
+                if (customer.advanceAmount > 0) {
+                    if (customer.advanceAmount >= totalDue) {
+                        customer.advanceAmount -= totalDue;
+                        statusPay = "Paid"
+
+                        totalDue = 0;
+                    } else {
+                        totalDue -= customer.advanceAmount;
+                        customer.advanceAmount = 0;
+                    }
+                }
+
+                // Deduct remaining balance (if any)
+                if (customer.remainingBalance > 0) {
+                    totalDue += customer.remainingBalance;
+                    customer.remainingBalance = 0;
+                }
+                if (totalDue > 0) {
+                    remainingAmount = totalDue;
+                }
+
+                const newCollection = new Collection({
+                    userId: customer.createdBy,
+                    customerId: customer._id,
+                    amountDue: totalDue,
+                    amountPaid: 0,
+                    dueDate: new Date(year, month - 1, 10),
+                    month,
+                    year,
+                    status:statusPay,
+                   
+                });
+                customer.remainingBalance = remainingAmount; 
+                customer. transactions.push({type:'due',amount:totalDue })
+
+                await newCollection.save();
+                await customer.save();
+
+                console.log(`Bill generated for ${customer.name}. Due: ₹${totalDue}`);
+            } else {
+                console.log(`Bill for ${customer.name} already exists.`);
+            }
+        }
+        res.status(200).json({
+            message:'done genrate'
+        })
+    } catch (error) {
+        console.error("Error generating monthly bills:", error);
+        next(error)
+    }
+};
 
 
 export const generateMonthlyCollections = async () => {
@@ -381,5 +456,6 @@ export default {
     getMonthWiseReport,
     getTotalCollectionByAllPlans,
     getMonthlyCollectionByUser,
-    downloadxl
+    downloadxl,
+    generateMonthlyCollectionss
 }
