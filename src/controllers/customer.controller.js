@@ -172,10 +172,71 @@ const deleteCustomer = async(req,res,next)=>{
     }
 }
 
+const getLast20Transactions = async (req, res, next) => {
+    try {
+        let customers = await Customer.find()
+            .populate({
+                path: 'transactions.collectedBy',  // Populate collectedBy field inside transactions
+                select: 'userName'  // Only fetch the userName field
+            });
+
+        res.status(200).json({
+            message: "Last 20 Transactions (excluding 'due')",
+            transactions: customers.flatMap(customer =>
+                customer.transactions
+                    .filter(t => t.type !== "due")  // Exclude 'due' transactions
+                    .map(t => ({
+                        date: t.date,
+                        type: t.type,
+                        amount: t.amount,
+                        collectedBy: t.collectedBy ? { _id: t.collectedBy._id, userName: t.collectedBy.userName } : null
+                    }))
+            ).slice(-20) // Limit to last 20 transactions
+        });
+       
+        // let transactions = await Customer.aggregate([
+        //     { $unwind: "$transactions" }, // Convert transactions array into separate documents
+        //     { $match: { "transactions.type": { $ne: "due" } } }, // Exclude transactions with type "due"
+        //     { $sort: { "transactions.date": -1 } }, // Sort transactions by latest date
+        //     { $limit: 20 }, // Get the last 20 transactions
+        //     { 
+        //         $lookup: { // Populate collectedBy field from the User model
+        //             from: "user",
+        //             localField: "transactions.collectedBy",
+        //             foreignField: "_id",
+        //             as: "transactions.collectedBy"
+        //         }
+        //     },
+        //     { 
+        //         $unwind: { path: "$transactions.collectedBy", preserveNullAndEmptyArrays: true } // Ensure collectedBy is structured properly
+        //     },
+        //     {
+        //         $project: { // Select only required fields
+        //             _id: 0,
+        //             "transactions.date": 1,
+        //             "transactions.type": 1,
+        //             "transactions.amount": 1,
+        //             "transactions.collectedBy._id": 1,
+        //             "transactions.collectedBy.userName": 1
+        //         }
+        //     }
+        // ]);
+
+        // res.status(200).json({
+        //     message: "Last 20 Transactions (excluding 'due')",
+        //     transactions
+        // });
+    } catch (error) {
+        next(error);
+    }
+};
+
+
 export default {
     createCustomer,
     changePlan,
     deleteCustomer,
     getAllCustomer,
-    bulkCreateCustomers
+    bulkCreateCustomers,
+    getLast20Transactions
 }
