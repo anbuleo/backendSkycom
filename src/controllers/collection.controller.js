@@ -65,7 +65,7 @@ export const generateMonthlyCollections = async () => {
                    
                 });
                 customer.remainingBalance = remainingAmount; 
-                customer. transactions=[{type:'due',amount:amount}]
+                customer. transactions.pus({type:'due',amount:totalDue })
 
                 await newCollection.save();
                 await customer.save();
@@ -117,13 +117,13 @@ const makePayment = async (req, res,next) => {
             if (req.user) {
                 collection.userId = req.user.id;
             }
-            customer. transactions=[{type:'due',amount:amount,collectedBy:req.user.id}]
+            customer. transactions.push({ type: 'payment', amount: amountPaid, collectedBy: req.user.id });
         await collection.save();
         await customer.save();
 
         res.status(200).json({ message: "Payment successful", collection, customer });
     } catch (error) {
-    // console.log(error)
+    console.log(error)
         res.status(500).json({ message: "Error processing payment", error });
     }
 };
