@@ -65,7 +65,7 @@ export const generateMonthlyCollections = async () => {
                    
                 });
                 customer.remainingBalance = remainingAmount; 
-                customer. transactions.pus({type:'due',amount:totalDue })
+                customer. transactions.push({type:'due',amount:totalDue })
 
                 await newCollection.save();
                 await customer.save();
