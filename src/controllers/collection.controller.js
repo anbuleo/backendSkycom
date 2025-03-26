@@ -6,7 +6,7 @@ import XLSX from "xlsx";
 import fs from "fs";
 
 
-const generateMonthlyCollectionss =async () => {
+const generateMonthlyCollectionss =async (req,res,next) => {
     try {
         const customers = await Customer.find();
         let statusPay = "Pending"
