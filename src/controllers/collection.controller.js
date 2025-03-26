@@ -6,26 +6,35 @@ import XLSX from "xlsx";
 import fs from "fs";
 
 
-const generateMonthlyCollectionss =async (req,res,next) => {
+const generateMonthlyCollectionss = async (req, res, next) => {
     try {
         const customers = await Customer.find();
-        let statusPay = "Pending"
-
         if (!customers.length) {
             console.log("No customers found.");
-            return;
+            return res.status(200).json({ message: "No customers found." });
         }
 
         const today = new Date();
         const month = today.getMonth() + 1;
         const year = today.getFullYear();
 
-        for (const customer of customers) {
+        // Fetch all plans in one go (avoid multiple queries)
+        const planIds = customers.map(customer => customer.planId);
+        const plans = await Plan.find({ _id: { $in: planIds } }).lean();
+        const planMap = plans.reduce((acc, plan) => {
+            acc[plan._id] = plan.amount;  // Store plan amount by ID
+            return acc;
+        }, {});
+
+        const bulkCustomerUpdates = [];
+        const newCollections = [];
+
+        await Promise.all(customers.map(async (customer) => {
             const existingCollection = await Collection.findOne({ customerId: customer._id, month, year });
 
             if (!existingCollection) {
-                let payable =await Plan.findById({_id:customer.planId})
-                let monthlyCharge = Number(payable.amount); // Default monthly charge
+                let statusPay = "Pending";
+                let monthlyCharge = Number(planMap[customer.planId] || 0); // Get charge from map
                 let totalDue = monthlyCharge;
                 let remainingAmount = 0;
 
@@ -33,8 +42,7 @@ const generateMonthlyCollectionss =async (req,res,next) => {
                 if (customer.advanceAmount > 0) {
                     if (customer.advanceAmount >= totalDue) {
                         customer.advanceAmount -= totalDue;
-                        statusPay = "Paid"
-
+                        statusPay = "Paid";
                         totalDue = 0;
                     } else {
                         totalDue -= customer.advanceAmount;
@@ -42,16 +50,17 @@ const generateMonthlyCollectionss =async (req,res,next) => {
                     }
                 }
 
-                // Deduct remaining balance (if any)
+                // Deduct remaining balance
                 if (customer.remainingBalance > 0) {
                     totalDue += customer.remainingBalance;
                     customer.remainingBalance = 0;
                 }
+
                 if (totalDue > 0) {
                     remainingAmount = totalDue;
                 }
 
-                const newCollection = new Collection({
+                newCollections.push({
                     userId: customer.createdBy,
                     customerId: customer._id,
                     amountDue: totalDue,
@@ -59,28 +68,42 @@ const generateMonthlyCollectionss =async (req,res,next) => {
                     dueDate: new Date(year, month - 1, 10),
                     month,
                     year,
-                    status:statusPay,
-                   
+                    status: statusPay,
                 });
-                customer.remainingBalance = remainingAmount; 
-                customer. transactions.push({type:'due',amount:totalDue })
 
-                await newCollection.save();
-                await customer.save();
+                bulkCustomerUpdates.push({
+                    updateOne: {
+                        filter: { _id: customer._id },
+                        update: {
+                            $set: { remainingBalance: remainingAmount },
+                            $push: { transactions: { type: 'due', amount: totalDue } }
+                        }
+                    }
+                });
 
                 console.log(`Bill generated for ${customer.name}. Due: ₹${totalDue}`);
             } else {
                 console.log(`Bill for ${customer.name} already exists.`);
             }
+        }));
+
+        // Insert all collections in one batch
+        if (newCollections.length) {
+            await Collection.insertMany(newCollections);
         }
-        res.status(200).json({
-            message:'done genrate'
-        })
+
+        // Update customers in one batch
+        if (bulkCustomerUpdates.length) {
+            await Customer.bulkWrite(bulkCustomerUpdates);
+        }
+
+        res.status(200).json({ message: "Monthly collections generated successfully" });
     } catch (error) {
         console.error("Error generating monthly bills:", error);
-        next(error)
+        next(error);
     }
 };
+
 
 
 export const generateMonthlyCollections = async () => {
