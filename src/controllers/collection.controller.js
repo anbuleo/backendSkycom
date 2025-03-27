@@ -75,7 +75,7 @@ const generateMonthlyCollectionss = async (req, res, next) => {
                     updateOne: {
                         filter: { _id: customer._id },
                         update: {
-                            $set: { remainingBalance: remainingAmount },
+                            $set: { remainingBalance: remainingAmount,advanceAmount: customer.advanceAmount },
                             $push: { transactions: { type: 'due', amount: totalDue } }
                         }
                     }
