@@ -10,6 +10,7 @@ router.post('/createcustomer',verifyToken,customerController.createCustomer)
 router.put('/changeplan/:id',verifyToken,customerController.changePlan)
 router.delete('/deletecustomer/:id',verifyToken,customerController.deleteCustomer)
 router.get('/getallcustomer',verifyToken,customerController.getAllCustomer)
+router.get('/getcollection',verifyToken,customerController.getCurrentMonthCollectionByStaff)
 router.get('/get20',verifyToken,customerController.getLast20Transactions)
 router.post('/bulk-upload',verifyToken,upload.single("file"),customerController.bulkCreateCustomers)
 

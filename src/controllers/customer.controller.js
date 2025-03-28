@@ -186,6 +186,7 @@ const getLast20Transactions = async (req, res, next) => {
                 customer.transactions
                     .filter(t => t.type !== "due")  // Exclude 'due' transactions
                     .map(t => ({
+                        customerName: customer.name,
                         date: t.date,
                         type: t.type,
                         amount: t.amount,
@@ -230,6 +231,73 @@ const getLast20Transactions = async (req, res, next) => {
         next(error);
     }
 };
+const getCurrentMonthCollectionByStaff = async (req, res, next) => {
+    try {
+        const today = new Date();
+        const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+        let result = await Customer.aggregate([
+            { $unwind: "$transactions" }, // Flatten transactions array
+            { 
+                $match: { 
+                    "transactions.type": { $in: ["payment", "advance"] }, // Include 'payment' & 'advance'
+                    "transactions.date": { 
+                        $gte: firstDayOfMonth, 
+                        $lte: lastDayOfMonth 
+                    } // Filter transactions within the current month
+                } 
+            },
+            { 
+                $group: {
+                    _id: { 
+                        day: { $dayOfMonth: "$transactions.date" }, 
+                        collectedBy: "$transactions.collectedBy",
+                        type: "$transactions.type" // Group separately for 'payment' and 'advance'
+                    },
+                    totalCollected: { $sum: "$transactions.amount" } // Sum amount for each type
+                }
+            },
+            { 
+                $lookup: { 
+                    from: "users", 
+                    localField: "_id.collectedBy", 
+                    foreignField: "_id", 
+                    as: "collectorInfo" 
+                } 
+            },
+            { 
+                $unwind: { 
+                    path: "$collectorInfo", 
+                    preserveNullAndEmptyArrays: true 
+                } 
+            },
+            { 
+                $project: {
+                    _id: 0,
+                    day: "$_id.day",
+                    collectedBy: {
+                        _id: "$_id.collectedBy",
+                        userName: "$collectorInfo.userName" // Fetch staff name
+                    },
+                    type: "$_id.type", // Show whether it's 'payment' or 'advance'
+                    totalCollected: 1
+                }
+            },
+            { $sort: { day: 1, type: 1 } } // Sort by day, then type
+        ]);
+
+        res.status(200).json({
+            message: "Current Month Staff-wise and Day-wise Collection (Including Advance)",
+            data: result
+        });
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+
 
 
 export default {
@@ -238,5 +306,6 @@ export default {
     deleteCustomer,
     getAllCustomer,
     bulkCreateCustomers,
-    getLast20Transactions
+    getLast20Transactions,
+    getCurrentMonthCollectionByStaff
 }
