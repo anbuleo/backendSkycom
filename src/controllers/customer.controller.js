@@ -50,8 +50,8 @@ const bulkCreateCustomers = async (req, res, next) => {
           mobile: String(row["Mobile"]).trim(), // Ensure mobile is a string
           address: row["Installation Address"],
           planId: planMap[planName] || null, // Replace plan name with ID, or set to null if not found
-          advanceAmount: row["Advance Amount"] || 0,
-          remainingBalance: row["Remaining Balance"] || 0,
+          advanceAmount: Number(row["Advance Amount"]) || 0,
+          remainingBalance: Number(row["Remaining Balance"]) || 0,
           createdBy: req.user.id,
         };
       });
