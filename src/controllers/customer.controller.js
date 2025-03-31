@@ -235,8 +235,7 @@ const getCurrentMonthCollectionByStaff = async (req, res, next) => {
     try {
         const today = new Date();
         const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-        const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-
+        const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999)
         let result = await Customer.aggregate([
             { $unwind: "$transactions" }, // Flatten transactions array
             { 

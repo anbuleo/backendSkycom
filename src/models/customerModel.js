@@ -10,7 +10,7 @@ const customerSchema = new mongoose.Schema({
     createdBy:{type:mongoose.Schema.Types.ObjectId,ref:'user'},
     transactions: [
         {
-          date: { type: Date, default: Date.now },
+          date: { type: Date, default:() => new Date() },
           type: { type: String, enum: ['due', 'payment','advance','remainbalance'], required: true },
           amount: { type: Number, required: true },
           collectedBy:{type:mongoose.Schema.Types.ObjectId,ref:'user'}
