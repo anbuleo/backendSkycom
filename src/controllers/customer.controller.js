@@ -172,8 +172,7 @@ const deleteCustomer = async(req,res,next)=>{
     }
 }
 
-const getLast20Transactions = async (req, res, next) => {
-    try {
+/*  
         let customers = await Customer.find()
             .populate({
                 path: 'transactions.collectedBy',  // Populate collectedBy field inside transactions
@@ -227,7 +226,43 @@ const getLast20Transactions = async (req, res, next) => {
         //     message: "Last 20 Transactions (excluding 'due')",
         //     transactions
         // });
-    } catch (error) {
+   */
+const getLast20Transactions = async (req, res, next) => {
+    try {  const transactions = await Customer.aggregate([
+        { $unwind: "$transactions" }, // Separate each transaction
+        { $match: { "transactions.type": { $ne: "due" } } }, // Exclude 'due'
+        { $sort: { "transactions.date": -1 } }, // Sort by latest date
+        { $limit: 20 }, // Get only top 20
+        {
+          $lookup: {
+            from: "users", // Make sure your collection name is correct ("users", not "user")
+            localField: "transactions.collectedBy",
+            foreignField: "_id",
+            as: "collectedBy"
+          }
+        },
+        {
+          $unwind: { path: "$collectedBy", preserveNullAndEmptyArrays: true }
+        },
+        {
+          $project: {
+            _id: 0,
+            customerName: "$name",
+            date: "$transactions.date",
+            type: "$transactions.type",
+            amount: "$transactions.amount",
+            collectedBy: {
+              _id: "$collectedBy._id",
+              userName: "$collectedBy.userName"
+            }
+          }
+        }
+      ]);
+  
+      res.status(200).json({
+        message: "Latest 20 Transactions (excluding 'due')",
+        transactions
+      });} catch (error) {
         next(error);
     }
 };

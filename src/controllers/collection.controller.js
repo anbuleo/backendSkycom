@@ -4,6 +4,8 @@ import Plan from "../models/planModel.js";
 import { errorHandler } from "../uitils/errorHandler.js";
 import XLSX from "xlsx"; 
 import fs from "fs";
+import Expense from "../models/expenseModel.js";
+import Admin from "../models/adminModel.js"
 
 
 const generateMonthlyCollectionss = async (req, res, next) => {
@@ -557,9 +559,246 @@ const downloadxl = async (req, res) => {
         res.status(500).json({ success: false, message: "Error fetching collection data", error });
     }
 }
+const createExpense =async(req,res,next)=>{
+    try {
+        let { amount, remarks } = req.body;
+        let userId = req.user.id;
+
+        // Get start and end of the current day
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+
+        // Check if an expense already exists for today
+        let existingExpense = await Expense.findOne({
+            userId: userId,
+            date: { $gte: todayStart, $lte: todayEnd }
+        });
+
+        if (existingExpense && existingExpense.status === 'unclaimed' ) {
+            // Update existing expense
+            existingExpense.amount = amount;
+            existingExpense.remarks = remarks;
+            await existingExpense.save();
+
+            return res.status(200).json({ message: "Expense updated successfully!", data: existingExpense });
+        }
+
+        // Create new expense
+        const newExpense = new Expense({
+            userId,
+            amount,
+            remarks
+        });
+
+        await newExpense.save();
+
+        res.status(201).json({ message: "Expense created successfully!", data: newExpense });
+
+        
+    } catch (error) {
+        next(error)
+    }
+}
+const getTodayExpenseByUser = async (req, res, next) => {
+    try {
+        let userId = req.user.id; // Extract user ID from authenticated request
+
+        // Get start and end of the current day
+        // const todayStart = new Date();
+        // todayStart.setHours(0, 0, 0, 0);
+
+        // const todayEnd = new Date();
+        // todayEnd.setHours(23, 59, 59, 999);
+
+        // Find the expense for today
+        const todayExpense = await Expense.find({
+            userId: userId,
+            status: 'unclaimed',
+        });
+
+        if (!todayExpense) {
+            return res.status(404).json({ message: "No expense found for today." });
+        }
+
+        res.status(200).json({ message: "Today's expense retrieved successfully!",  todayExpense });
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+const createDailycol = async(req,res,next)=>{
+    try{
+        let userId = req.user.id
+        const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Check if a record already exists for today
+    const existingRecord = await Admin.findOne({
+      userId: userId,
+      collectionDate: { $gte: startOfDay, $lte: endOfDay }
+    });
+    if (existingRecord) {
+        return res.status(400).json({
+          message: "Today's collection is already submitted."
+        });
+      }
+    //   console.log(req.body.expenseId)
+      if(req.body.expenseId){
+        await Expense.findByIdAndUpdate(
+          req.body.expenseId,
+          { status: "claimed" },
+          { new: true }
+        );
+      }
+      // Create new collection
+      const newCollection = await Admin.create({
+        userId: userId,
+        collectionAmount: req.body.collectionAmount,
+        recievedAmount: req.body.recievedAmount,
+        collectionDate: new Date(),
+        status:  "Pending",
+        expenseId: req.body.expenseId || null
+      });
+  
+      res.status(201).json({
+        message: "Collection created successfully!",
+        newCollection
+      });
+
+    }catch(error){
+        next(error)
+    }
+}
+
+const getDailySubmitedCollections = async(req,res,next)=>{
+    try{
+        let userId = req.user.id
+        let report = await Admin.find({userId}).populate({
+            path: "userId",
+            select: "userName", // Only get userName from user
+          })
+          .populate({
+            path: "expenseId",
+            select: "amount remarks", // Only get amount from expense
+          })
+          .sort({ createdAt: -1 }).limit(30);
+        if(report.length ==0) return errorHandler(400,'No datas')
+
+        res.status(200).json({
+            message:"Data fetch Succes",
+            report
+        })
+    }catch(error){
+        next(error)
+    }
+}
 
 
+const getAllAdminData = async (req, res, next) => {
+    try {
+      const data = await Admin.find()
+        .populate({
+          path: "userId",
+          select: "userName", // Only get userName from user
+        })
+        .populate({
+          path: "expenseId",
+          select: "amount remarks", // Only get amount from expense
+        })
+        .sort({ createdAt: -1 }).limit(20); // Optional: Latest first
+  
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error); // Use your error middleware
+    }
+  };
 
+  const receiveCollection = async (req, res, next) => {
+    try {
+      const { id } = req.params;
+  
+      const record = await Admin.findById(id);
+      if (!record) return res.status(404).json({ message: "Record not found" });
+  
+      let expenseAmount = 0;
+  
+      if (record.expenseId) {
+        const expense = await Expense.findById(record.expenseId);
+        if (expense) {
+          expenseAmount = expense.amount;
+  
+          // Mark the expense as claimed
+        //   await Expense.findByIdAndUpdate(record.expenseId, {
+        //     status: "claimed",
+        //   });
+        }
+      }
+  
+      const calculatedRecievedAmount = Number(record.collectionAmount) - Number(expenseAmount);
+  
+      record.status = "Recieved";
+      record.recievedAmount = calculatedRecievedAmount;
+  
+      await record.save();
+  
+      res.status(200).json({ message: "Collection marked as received", data: record });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  const downloadAdminExcel = async (req, res, next) => {
+    try {
+        const data = await Admin.find()
+          .populate({ path: "userId", select: "userName" })
+          .populate({ path: "expenseId", select: "amount remarks" });
+    
+        // Prepare flat array of rows
+        const excelData = data.map((item) => ({
+          UserName: item.userId?.userName || "—",
+          CollectionAmount: item.collectionAmount ?? "—",
+          RecievedAmount: item.recievedAmount ?? "—",
+          CollectionDate: item.collectionDate
+            ? new Date(item.collectionDate).toLocaleDateString()
+            : "—",
+          Status: item.status || "—",
+          ExpenseAmount: item.expenseId?.amount ?? "—",
+          Remarks: item.expenseId?.remarks ?? "—",
+        }));
+    
+        // Create worksheet
+        const worksheet = XLSX.utils.json_to_sheet(excelData);
+    
+        // Create workbook and append sheet
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Admin Collection");
+    
+        // Write to buffer
+        const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    
+        // Set headers
+        res.setHeader(
+          "Content-Disposition",
+          "attachment; filename=Admin_Collection_Report.xlsx"
+        );
+        res.setHeader(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+    
+        // Send file
+        res.send(buffer);
+      } catch (error) {
+        console.log(error)
+      next(error);
+    }
+  };
 
 export default {
     makePayment,
@@ -569,5 +808,13 @@ export default {
     getTotalCollectionByAllPlans,
     getMonthlyCollectionByUser,
     downloadxl,
-    generateMonthlyCollectionss
+    generateMonthlyCollectionss,
+    createExpense,
+    getTodayExpenseByUser,
+    getDailySubmitedCollections,
+    createDailycol,
+    getAllAdminData,
+    receiveCollection,
+    downloadAdminExcel
+
 }
