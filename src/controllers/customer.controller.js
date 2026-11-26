@@ -7,6 +7,41 @@ import { extractStateCodeFromGstin, isValidGstin } from '../uitils/gstUtils.js';
 import XLSX from 'xlsx';
 
 const VALID_STATUSES = ['active', 'suspended', 'disconnected'];
+const OPENING_BALANCE_DESC = 'Opening Outstanding Balance (Prior Dues)';
+
+const getPriorCycleMeta = () => {
+  const now = new Date();
+  let month = now.getMonth(); // 0-indexed current month === 1-indexed previous month
+  let year = now.getFullYear();
+  if (month === 0) {
+    month = 12;
+    year -= 1;
+  }
+  const dueDate = new Date(year, month, 0, 23, 59, 59, 999);
+  return { month, year, dueDate };
+};
+
+const buildOpeningBalanceBillDoc = ({ customerId, userId, amount, description }) => {
+  const cleanAmount = Math.round(Math.max(0, Number(amount) || 0) * 100) / 100;
+  const { month, year, dueDate } = getPriorCycleMeta();
+  return {
+    userId,
+    customerId,
+    billType: 'custom',
+    description: description || OPENING_BALANCE_DESC,
+    isGstBill: false,
+    taxableAmount: cleanAmount,
+    taxAmount: 0,
+    amountDue: cleanAmount,
+    amountPaid: 0,
+    dueDate,
+    month,
+    year,
+    status: 'Overdue',
+    paymentMode: 'cash',
+    payments: [],
+  };
+};
 
 const parseGstFields = (body) => {
   const isGstCustomer = Boolean(
@@ -71,6 +106,16 @@ const createCustomer = async (req, res, next) => {
       return next(errorHandler(404, 'Selected plan does not exist'));
     }
 
+    const initialTransactions = [];
+    if (remainingBalance > 0) {
+      initialTransactions.push({
+        type: 'remainbalance',
+        amount: remainingBalance,
+        collectedBy: id,
+        note: OPENING_BALANCE_DESC,
+      });
+    }
+
     const newCustomer = new Customer({
       name,
       mobile,
@@ -80,10 +125,21 @@ const createCustomer = async (req, res, next) => {
       planId,
       createdBy: id,
       remainingBalance,
+      transactions: initialTransactions,
       ...gstFields,
     });
 
     await newCustomer.save();
+
+    if (remainingBalance > 0) {
+      await Collection.create(
+        buildOpeningBalanceBillDoc({
+          customerId: newCustomer._id,
+          userId: id,
+          amount: remainingBalance,
+        })
+      );
+    }
 
     res.status(201).json({
       success: true,
@@ -317,14 +373,46 @@ const bulkCreateCustomers = async (req, res, next) => {
     }
 
     let insertedCustomers = [];
+    let openingBillsCreated = 0;
     if (newCustomers.length > 0) {
-      insertedCustomers = await Customer.insertMany(newCustomers);
+      const preparedDocs = newCustomers.map((doc) => ({
+        ...doc,
+        transactions:
+          doc.remainingBalance > 0
+            ? [
+                {
+                  type: 'remainbalance',
+                  amount: doc.remainingBalance,
+                  collectedBy: req.user.id,
+                  note: OPENING_BALANCE_DESC,
+                },
+              ]
+            : [],
+      }));
+      insertedCustomers = await Customer.insertMany(preparedDocs);
+
+      const openingBillDocs = insertedCustomers
+        .filter((c) => Number(c.remainingBalance) > 0)
+        .map((c) =>
+          buildOpeningBalanceBillDoc({
+            customerId: c._id,
+            userId: req.user.id,
+            amount: c.remainingBalance,
+          })
+        );
+      if (openingBillDocs.length > 0) {
+        await Collection.insertMany(openingBillDocs);
+        openingBillsCreated = openingBillDocs.length;
+      }
     }
 
     res.status(201).json({
       success: true,
-      message: `${insertedCustomers.length} customer(s) added successfully`,
+      message: `${insertedCustomers.length} customer(s) added successfully${
+        openingBillsCreated > 0 ? ` (${openingBillsCreated} opening balance bill(s) created)` : ''
+      }`,
       inserted: insertedCustomers.length,
+      openingBillsCreated,
       duplicates: duplicateCustomers.length,
       invalidPlans: invalidCustomers.length,
       invalidRowsCount: invalidRows.length,
@@ -485,6 +573,10 @@ const changePlan = async (req, res, next) => {
         type: 'remainbalance',
         amount: remainingBalance,
         collectedBy: req.user.id,
+        note:
+          remainingBalance > oldRemaining
+            ? `Remaining Balance added (+₹${Math.round((remainingBalance - oldRemaining) * 100) / 100})`
+            : `Remaining Balance adjusted to ₹${remainingBalance}`,
       });
     }
 
@@ -496,6 +588,18 @@ const changePlan = async (req, res, next) => {
     const updatedCustomer = await Customer.findByIdAndUpdate(id, updateOp, {
       new: true,
     });
+
+    if (remainingBalance > oldRemaining) {
+      const addedDue = Math.round((remainingBalance - oldRemaining) * 100) / 100;
+      await Collection.create(
+        buildOpeningBalanceBillDoc({
+          customerId: updatedCustomer._id,
+          userId: req.user.id,
+          amount: addedDue,
+          description: 'Added Remaining Balance Due',
+        })
+      );
+    }
 
     res.status(200).json({
       success: true,

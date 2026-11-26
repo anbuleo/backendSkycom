@@ -691,6 +691,8 @@ const makePayment = async (req, res, next) => {
     if (collection.invoiceNumber) noteParts.push(`Invoice ${collection.invoiceNumber}`);
     else if (collection.billType === 'service' && collection.description) {
       noteParts.push(`Service: ${collection.description}`);
+    } else if (collection.billType === 'custom' && collection.description) {
+      noteParts.push(collection.description);
     } else {
       noteParts.push(`Bill ${collection.month}/${collection.year}`);
     }
@@ -909,17 +911,19 @@ const getPendingPayments = async (req, res, next) => {
   }
 };
 
-// Returns ALL current-month bills PLUS any unpaid Overdue/Pending arrears from previous cycles
+// Returns ALL current-month bills PLUS any unpaid Overdue/Pending arrears PLUS prior-cycle bills paid this month
 const getcurrentmonthcollection = async (req, res, next) => {
   try {
     const today = new Date();
     const month = today.getMonth() + 1;
     const year = today.getFullYear();
+    const currentMonthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
 
     const collection = await Collection.find({
       $or: [
         { month, year },
         { amountDue: { $gt: 0 }, status: { $in: ['Overdue', 'Pending'] } },
+        { 'payments.date': { $gte: currentMonthStart } },
       ],
     })
       .populate('customerId', 'name mobile address status isGstCustomer companyName gstin planId')
@@ -1596,10 +1600,128 @@ const downloadAdminExcel = async (req, res, next) => {
   }
 };
 
+/**
+ * Idempotently converts any unbilled Customer.remainingBalance into collectible Overdue
+ * Opening Balance bills (billType: 'custom') without double-counting existing unpaid bills.
+ */
+const syncOpeningBalances = async (req, res, next) => {
+  try {
+    const OPENING_DESC = 'Opening Outstanding Balance (Prior Dues)';
+    const customersWithBalance = await Customer.find({ remainingBalance: { $gt: 0 } }).sort({
+      name: 1,
+    });
+
+    if (customersWithBalance.length === 0) {
+      return res.status(200).json({
+        success: true,
+        createdCount: 0,
+        skippedCount: 0,
+        totalAmountSynced: 0,
+        message: 'No customers with pending remaining balance found.',
+      });
+    }
+
+    const customerIds = customersWithBalance.map((c) => c._id);
+    const unpaidAgg = await Collection.aggregate([
+      {
+        $match: {
+          customerId: { $in: customerIds },
+          status: { $in: ['Pending', 'Overdue'] },
+          amountDue: { $gt: 0 },
+        },
+      },
+      {
+        $group: {
+          _id: '$customerId',
+          unpaidTotal: { $sum: '$amountDue' },
+        },
+      },
+    ]);
+
+    const unpaidByCustomer = new Map(
+      unpaidAgg.map((row) => [String(row._id), round2(row.unpaidTotal)])
+    );
+
+    const now = new Date();
+    let prevMonth = now.getMonth();
+    let prevYear = now.getFullYear();
+    if (prevMonth === 0) {
+      prevMonth = 12;
+      prevYear -= 1;
+    }
+    const prevDueDate = new Date(prevYear, prevMonth, 0, 23, 59, 59, 999);
+
+    let createdCount = 0;
+    let skippedCount = 0;
+    let totalAmountSynced = 0;
+
+    for (const customer of customersWithBalance) {
+      const totalRemaining = round2(Number(customer.remainingBalance) || 0);
+      const alreadyInBills = unpaidByCustomer.get(String(customer._id)) || 0;
+      const unbilledDue = round2(totalRemaining - alreadyInBills);
+
+      if (unbilledDue <= 0) {
+        skippedCount += 1;
+        continue;
+      }
+
+      await Collection.create({
+        userId: req.user?.id || customer.createdBy,
+        customerId: customer._id,
+        billType: 'custom',
+        description: OPENING_DESC,
+        isGstBill: false,
+        taxableAmount: unbilledDue,
+        taxAmount: 0,
+        amountDue: unbilledDue,
+        amountPaid: 0,
+        dueDate: prevDueDate,
+        month: prevMonth,
+        year: prevYear,
+        status: 'Overdue',
+        paymentMode: 'cash',
+        payments: [],
+      });
+
+      const hasOpeningTxn = (customer.transactions || []).some(
+        (t) =>
+          t.type === 'remainbalance' && String(t.note || '').includes('Opening Outstanding Balance')
+      );
+      if (!hasOpeningTxn) {
+        customer.transactions.push({
+          date: prevDueDate,
+          type: 'remainbalance',
+          amount: unbilledDue,
+          collectedBy: req.user?.id || customer.createdBy,
+          note: OPENING_DESC,
+        });
+        await customer.save();
+      }
+
+      createdCount += 1;
+      totalAmountSynced = round2(totalAmountSynced + unbilledDue);
+    }
+
+    res.status(200).json({
+      success: true,
+      createdCount,
+      skippedCount,
+      totalAmountSynced,
+      message:
+        createdCount > 0
+          ? `Added ${createdCount} remaining balance bill(s) totaling ₹${totalAmountSynced.toLocaleString('en-IN')} to the Collect queue.`
+          : 'All customer remaining balances are already synced to collectible bills.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export default {
   previewMonthlyBilling,
   getBillingRuns,
   generateSingleCustomerBill,
+  syncOpeningBalances,
   makePayment,
   reversePayment,
   getBillById,

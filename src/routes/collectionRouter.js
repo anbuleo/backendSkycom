@@ -28,6 +28,12 @@ router.post(
   verifyAdmin,
   collectionController.generateSingleCustomerBill
 );
+router.post(
+  '/sync-opening-balances',
+  verifyToken,
+  verifyAdmin,
+  collectionController.syncOpeningBalances
+);
 
 router.post('/expense', verifyToken, verifyApproved, collectionController.createExpense);
 router.put('/expense/:id', verifyToken, verifyApproved, collectionController.updateExpense);
